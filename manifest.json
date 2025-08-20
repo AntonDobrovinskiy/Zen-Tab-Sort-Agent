@@ -1,0 +1,28 @@
+{
+  "manifest_version": 2,
+  "name": "Tab Sorter Agent",
+  "version": "1.0",
+  "description": "Automatically sorts your browser tabs, with a hotkey for manual sorting.",
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "permissions": [
+    "tabs"
+  ],
+  "browser_action": {
+    "default_title": "Sort Tabs"
+  },
+  "commands": {
+    "sort-tabs": {
+      "suggested_key": {
+        "default": "Alt+Shift+S",
+        "mac": "Alt+Shift+S"
+      },
+      "description": "Sorts all tabs alphabetically by URL and then by title."
+    }
+  },
+  "icons": {
+    "512": "icons/icon-512.png"
+  }
+}
+
