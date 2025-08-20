@@ -1,4 +1,4 @@
-🕵️ Tab Sorter: The Secret Agent of Order
+🕵️ Zen Tab Sorter Agent: The Secret Agent of Order
 
 Tab Sorter isn't just a browser extension. It's your personal secret agent, covertly living inside your tabs, fighting chaos, and enforcing order. It has a serious case of OCD and simply cannot tolerate tabs being out of place.
 

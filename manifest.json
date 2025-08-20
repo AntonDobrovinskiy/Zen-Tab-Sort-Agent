@@ -1,6 +1,6 @@
 {
   "manifest_version": 2,
-  "name": "Tab Sorter Agent",
+  "name": "Zen Tab Sorterer Agent",
   "version": "1.0",
   "description": "Automatically sorts your browser tabs, with a hotkey for manual sorting.",
   "background": {
