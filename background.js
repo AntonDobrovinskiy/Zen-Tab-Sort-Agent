@@ -1,38 +1,47 @@
 // A simple function to sort tabs in the current window.
 // It's like a tiny librarian for your browser tabs!
 async function sortTabs() {
-  // Get all tabs in the current window.
-  const tabs = await browser.tabs.query({ currentWindow: true });
-
-  // First remove duplicates
-  const uniqueTabs = await removeDuplicateTabs(tabs);
-
-  // Sort the remaining tabs. We'll use a two-level sorting approach:
-  // 1. Sort by URL first to group tabs from the same website.
-  // 2. Then, sort by title for a nice alphabetical order within each group.
-  uniqueTabs.sort((a, b) => {
-    const urlA = a.url;
-    const urlB = b.url;
-    const titleA = a.title;
-    const titleB = b.title;
-
-    // First, compare by URL.
-    const urlCompare = urlA.localeCompare(urlB);
+  try {
+    // Get ALL tabs
+    let tabs = await browser.tabs.query({ currentWindow: true });
     
-    // If URLs are different, we're done here.
-    if (urlCompare !== 0) {
-      return urlCompare;
-    }
+    // Remove duplicates first
+    tabs = await removeDuplicateTabs(tabs);
 
-    // If URLs are the same, let's sort by title.
-    return titleA.localeCompare(titleB);
-  });
+    // Create an array of objects with sorting information
+    const tabsWithSortInfo = tabs.map(tab => ({
+      id: tab.id,
+      index: tab.index,
+      domain: extractDomain(tab.url || ''),
+      url: tab.url || '',
+      title: tab.title || ''
+    }));
 
-  // Now, let's rearrange the tabs to their sorted positions.
-  // Move all tabs at once, starting from index 0.
-  // Think of it as putting the sorted stack of cards back on the table.
-  const tabIds = uniqueTabs.map(tab => tab.id);
-  await browser.tabs.move(tabIds, { index: 0 }); 
+    // Sort tabs
+    tabsWithSortInfo.sort((a, b) => {
+      // Compare domains first
+      const domainCompare = a.domain.localeCompare(b.domain);
+      if (domainCompare !== 0) return domainCompare;
+
+      // Then compare full URLs
+      const urlCompare = a.url.localeCompare(b.url);
+      if (urlCompare !== 0) return urlCompare;
+
+      // Finally compare titles
+      return a.title.localeCompare(b.title);
+    });
+
+    // Move all tabs to their new positions
+    const movements = tabsWithSortInfo.map((tab, newIndex) => 
+      browser.tabs.move(tab.id, { index: newIndex })
+    );
+
+    // Wait for all tab movements to complete
+    await Promise.all(movements);
+
+  } catch (error) {
+    console.error('Error sorting tabs:', error);
+  }
 }
 
 // Helper function to remove duplicate tabs
@@ -58,14 +67,43 @@ async function removeDuplicateTabs(tabs) {
   return Array.from(seen.values());
 }
 
+// Helper function to extract domain from URL
+function extractDomain(url) {
+  if (!url) return 'zzz_empty';
+  if (url.startsWith('about:')) return `0_${url}`;
+  if (url.startsWith('chrome:')) return `0_${url}`;
+  if (url.startsWith('firefox:')) return `0_${url}`;
+  if (url.startsWith('view-source:')) return `0_${url}`;
+
+  try {
+    const urlObject = new URL(url);
+    // Get main domain without subdomain
+    const parts = urlObject.hostname.split('.');
+    const domain = parts.length >= 2 ? parts.slice(-2).join('.') : urlObject.hostname;
+    return domain;
+  } catch {
+    return `0_${url}`;
+  }
+}
+
 // Listen for when a new tab is created and has finished loading.
 // This is more efficient than sorting on every little change.
 browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   // The 'status' property tells us if the tab is fully loaded.
   // We only want to sort when it's "complete."
-  if (changeInfo.status === 'complete') {
+  if (changeInfo.status === 'complete' || changeInfo.url) {
     sortTabs();
   }
+});
+
+// Also sort when a tab is created
+browser.tabs.onCreated.addListener(() => {
+  sortTabs();
+});
+
+// Also sort when a tab is removed
+browser.tabs.onRemoved.addListener(() => {
+  sortTabs();
 });
 
 // We can also sort manually with a click on the extension icon.
