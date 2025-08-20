@@ -7,7 +7,7 @@ Its mission? To sort all your tabs alphabetically. First, by URL, and then, for 
 ✨ Features
 
 * **Autosort tabs** on open / update / activation.
-* 
+
 * **Sorting rules:**
   * By domain
   * Then by title (alphabetical order).
