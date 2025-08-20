@@ -4,21 +4,23 @@ Tab Sorter isn't just a browser extension. It's your personal secret agent, cove
 
 Its mission? To sort all your tabs alphabetically. First, by URL, and then, for perfect precision, by page title. Now your tabs will always be exactly where they're supposed to be.
 
-💼 Features & Arsenal
+✨ Features
 
-    Alphabetical Sorting: Sorts your tabs so you can always find what you need at a glance.
+* **Autosort tabs** on open / update / activation.
+* 
+* **Sorting rules:**
+  * By domain
+  * Then by title (alphabetical order).
+* **Duplicates:** automatically closed
+* **Hotkey:** `Alt+S` — manual sort on demand.
+* **Respect for Zen specifics:** pinned and Essential Tabs are ignored.
+* **Range-based sorting:** sorts only within the block of normal tabs, without moving pinned or special Zen sections.
 
-    A Secret Agent in Action: Works quietly, without unnecessary notifications. Just click the icon and watch it restore order.
+## 🛠 Usage
 
-    Simple to Use: One button, one mission. No complicated settings or extra menus.
-
-🚀 How to Use
-
-    Install: Add the extension from the Firefox Add-Ons Store.
-
-    Launch the Operation: Just open new tab and everything will sort itself. Your tabs, I mean. Or press Alt+S.
-
-    The Result: All your tabs will be instantly sorted alphabetically. Chaos defeated!
+* Open new tabs — they will automatically jump into the correct sorted position.
+* If you move tabs manually, press `Alt+S` to re-sort them.
+* Duplicates of the same URL are automatically closed.
 
 🤝 Compatibility
 

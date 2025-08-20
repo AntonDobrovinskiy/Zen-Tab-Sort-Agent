@@ -1,121 +1,161 @@
-// A simple function to sort tabs in the current window.
-// It's like a tiny librarian for your browser tabs!
-async function sortTabs() {
-  try {
-    // Get ALL tabs
-    let tabs = await browser.tabs.query({ currentWindow: true });
-    
-    // Remove duplicates first
-    tabs = await removeDuplicateTabs(tabs);
+/*
+ * Zen Tab Sorter (MV2)
+ * - Autosort by domain (addons.mozilla.org → mozilla) and by title.
+ * - Close duplicate URLs (ignoring #hash).
+ * - Alt+S — manual sorting.
+ * - Do not touch pinned tabs or (if detectable) Essential Tabs.
+ * - Place tabs correctly among normal tabs, without jumping over Zen's special sections.
+ */
 
-    // Create an array of objects with sorting information
-    const tabsWithSortInfo = tabs.map(tab => ({
-      id: tab.id,
-      index: tab.index,
-      domain: extractDomain(tab.url || ''),
-      url: tab.url || '',
-      title: tab.title || ''
-    }));
+const b = typeof browser !== 'undefined' ? browser : chrome;
 
-    // Sort tabs
-    tabsWithSortInfo.sort((a, b) => {
-      // Compare domains first
-      const domainCompare = a.domain.localeCompare(b.domain);
-      if (domainCompare !== 0) return domainCompare;
+// --- UTILITIES -------------------------------------------------------------
 
-      // Then compare full URLs
-      const urlCompare = a.url.localeCompare(b.url);
-      if (urlCompare !== 0) return urlCompare;
+// Mini-PSL: list of common multi-part suffixes to extract eTLD+1 without heavy libs.
+// For perfect accuracy, can be replaced by psl/tldts, but this covers most cases.
+const MULTIPART_SUFFIXES = new Set([
+  // UK
+  'co.uk','org.uk','ac.uk','gov.uk','ltd.uk','plc.uk','me.uk','net.uk',
+  // AU
+  'com.au','net.au','org.au','edu.au','gov.au',
+  // JP
+  'co.jp','or.jp','ne.jp','ac.jp','go.jp',
+  // BR
+  'com.br','net.br','org.br','gov.br','edu.br',
+  // Others commonly seen
+  'github.io','blogspot.com'
+]);
 
-      // Finally compare titles
-      return a.title.localeCompare(b.title);
-    });
-
-    // Move all tabs to their new positions
-    const movements = tabsWithSortInfo.map((tab, newIndex) => 
-      browser.tabs.move(tab.id, { index: newIndex })
-    );
-
-    // Wait for all tab movements to complete
-    await Promise.all(movements);
-
-  } catch (error) {
-    console.error('Error sorting tabs:', error);
+function getRegistrableDomain(hostname) {
+  const labels = (hostname || '').toLowerCase().split('.').filter(Boolean);
+  if (labels.length <= 1) return hostname || '';
+  const last2 = labels.slice(-2).join('.');
+  const last3 = labels.slice(-3).join('.');
+  if (MULTIPART_SUFFIXES.has(last2) && labels.length >= 3) {
+    return labels.slice(-3).join('.');
   }
+  if (MULTIPART_SUFFIXES.has(last3) && labels.length >= 4) {
+    return labels.slice(-4).join('.');
+  }
+  return last2;
 }
 
-// Helper function to remove duplicate tabs
-async function removeDuplicateTabs(tabs) {
-  const seen = new Map();
-  const duplicates = [];
+function getKeyDomain(urlStr) {
+  try {
+    const u = new URL(urlStr);
+    const reg = getRegistrableDomain(u.hostname); // e.g. mozilla.org
+    const parts = reg.split('.');
+    return (parts.length >= 2 ? parts[0] : reg) || '';
+  } catch { return ''; }
+}
 
-  // Find duplicates while keeping the first occurrence of each URL
-  tabs.forEach(tab => {
-    if (seen.has(tab.url)) {
-      duplicates.push(tab.id);
-    } else {
-      seen.set(tab.url, tab);
+function canonicalURL(urlStr) {
+  try {
+    const u = new URL(urlStr);
+    u.hash = '';
+    if (u.pathname !== '/' && u.pathname.endsWith('/')) {
+      u.pathname = u.pathname.replace(/\/+$/, '');
     }
+    return u.toString();
+  } catch { return urlStr; }
+}
+
+// Zen Essential tabs
+function isEssential(tab) {
+  if (tab && (tab.isEssential || tab.isZenEssential || tab.zenEssential)) return true;
+  if (tab && tab.extData && (tab.extData.isEssential || tab.extData.category === 'essential')) return true;
+  return false;
+}
+
+// Find the range of normal tabs and sort only within it, so we don’t disturb pinned/essential tabs.
+async function sortCurrentWindow() {
+  const [win] = await b.windows.getAll({ populate: true, windowTypes: ['normal'] });
+  if (!win || !win.tabs) return;
+
+  const tabs = win.tabs;
+  const movable = tabs.filter(t => !t.pinned && !isEssential(t));
+  if (movable.length <= 1) return;
+
+  const minIdx = Math.min(...movable.map(t => t.index));
+  const maxIdx = Math.max(...movable.map(t => t.index));
+
+  // 1) Remove duplicates
+  const seen = new Map(); // key -> tabId
+  for (const t of movable) {
+    const key = canonicalURL(t.url || t.pendingUrl || '');
+    if (!key) continue;
+    if (seen.has(key)) {
+      try { await b.tabs.remove(t.id); } catch {}
+    } else {
+      seen.set(key, t.id);
+    }
+  }
+
+  // Refresh tabs after duplicates were closed
+  const fresh = (await b.tabs.query({ windowId: win.id })).filter(t => !t.pinned && !isEssential(t) && t.index >= minIdx && t.index <= maxIdx);
+  if (fresh.length <= 1) return;
+
+  // 2) Sort
+  const sorted = [...fresh].sort((a, bTab) => {
+    const da = getKeyDomain(a.url || a.pendingUrl || '');
+    const db = getKeyDomain(bTab.url || bTab.pendingUrl || '');
+    const c1 = da.localeCompare(db, 'en', { sensitivity: 'base' });
+    if (c1 !== 0) return c1; // A..Z
+    const ta = (a.title || '').trim().toLowerCase();
+    const tb = (bTab.title || '').trim().toLowerCase();
+    return ta.localeCompare(tb, 'en', { sensitivity: 'base' });
   });
 
-  // Remove duplicate tabs
-  if (duplicates.length > 0) {
-    await browser.tabs.remove(duplicates);
+  // 3) Move tabs into consecutive positions
+  let target = minIdx;
+  for (const t of sorted) {
+    if (t.index !== target) {
+      try { await b.tabs.move(t.id, { index: target }); } catch {}
+    }
+    target++;
   }
-
-  // Return remaining tabs
-  return Array.from(seen.values());
 }
 
-// Helper function to extract domain from URL
-function extractDomain(url) {
-  if (!url) return 'zzz_empty';
-  if (url.startsWith('about:')) return `0_${url}`;
-  if (url.startsWith('chrome:')) return `0_${url}`;
-  if (url.startsWith('firefox:')) return `0_${url}`;
-  if (url.startsWith('view-source:')) return `0_${url}`;
+// Debounce to avoid firing too often on rapid events
+const timers = new Map();
+function scheduleSort(windowId, delay = 250) {
+  if (timers.has(windowId)) {
+    clearTimeout(timers.get(windowId));
+  }
+  timers.set(windowId, setTimeout(() => {
+    timers.delete(windowId);
+    sortCurrentWindow().catch(() => {});
+  }, delay));
+}
 
+// --- EVENT HANDLERS --------------------------------------------------------
+
+// Autosort: when new tab is created / URL changes / page load completes
+b.tabs.onCreated.addListener(tab => {
+  if (tab && tab.windowId != null) scheduleSort(tab.windowId, 300);
+});
+
+b.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if ((changeInfo.url || changeInfo.status === 'complete') && tab && tab.windowId != null) {
+    scheduleSort(tab.windowId, 200);
+  }
+});
+
+b.tabs.onActivated.addListener(activeInfo => {
+  if (activeInfo && activeInfo.windowId != null) scheduleSort(activeInfo.windowId, 400);
+});
+
+// Hotkey Alt+S — manual sort
+b.commands.onCommand.addListener(cmd => {
+  if (cmd === 'sort-tabs') {
+    sortCurrentWindow();
+  }
+});
+
+// Initial run when extension starts
+(async () => {
   try {
-    const urlObject = new URL(url);
-    // Get main domain without subdomain
-    const parts = urlObject.hostname.split('.');
-    const domain = parts.length >= 2 ? parts.slice(-2).join('.') : urlObject.hostname;
-    return domain;
-  } catch {
-    return `0_${url}`;
-  }
-}
-
-// Listen for when a new tab is created and has finished loading.
-// This is more efficient than sorting on every little change.
-browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  // The 'status' property tells us if the tab is fully loaded.
-  // We only want to sort when it's "complete."
-  if (changeInfo.status === 'complete' || changeInfo.url) {
-    sortTabs();
-  }
-});
-
-// Also sort when a tab is created
-browser.tabs.onCreated.addListener(() => {
-  sortTabs();
-});
-
-// Also sort when a tab is removed
-browser.tabs.onRemoved.addListener(() => {
-  sortTabs();
-});
-
-// We can also sort manually with a click on the extension icon.
-// Just in case things get a little messy.
-browser.browserAction.onClicked.addListener(sortTabs);
-
-// --- New code for the keyboard shortcut ---
-// Listen for commands (our hotkey!)
-browser.commands.onCommand.addListener(command => {
-  console.log(`Command received: ${command}`); // This is new!
-  if (command === "sort-tabs") {
-    console.log("Alt+S was pressed. Sorting tabs!");
-    sortTabs();
-  }
-});
+    const win = await b.windows.getCurrent();
+    if (win && win.id != null) scheduleSort(win.id, 200);
+  } catch {}
+})();
